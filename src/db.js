@@ -1,33 +1,65 @@
-var KeyValueDatabase = function(size) {
-	if(typeof(size) === 'undefined') {
-		size = 1024*1024; // default to a Mb
+var KeyValueDatabase = function() {
+	var that = this;
+	that.ready = false;	
+	that.error = '';
+	that.db = window.openDatabase('appstate', '1.0', 'Application State', 1024*1024);
+
+	// callbacks
+	function setWorkingState() {
+		that.error = 'Working';
 	}
-	var db = window.openDatabase('appState', '1.0', 'App State', size);
+	function readyCallback() { 
+		that.ready = true; 
+		that.error = '';
+	}
+	function errorCallback(e) { that.error = e; }
+	function buildReadyCallback(callback) { return function() { readyCallback(); callback(); }};
+	function buildErrorCallback(callback) { return function(e) { errorCallback(e); callback(); } };
+
+	// initialization
+	this.initialize = function(callback) {
+		function createDb(tx) {
+			tx.executeSql('create table if not exists appstate (`key`, `value`)');
+		}
+		setWorkingState();
+		that.db.transaction(createDb, buildErrorCallback(callback), buildReadyCallback(callback));
+	}
+
+	// save
+	this.save = function(key, value, callback) {
+		function saveKeyValue(tx) {
+			tx.executeSql("delete from appstate where key='" + key + "'");
+			tx.executeSql("insert into appstate values ('" + key + "', '" + value + "')");
+		}
+		setWorkingState();
+		that.db.transaction(saveKeyValue, buildErrorCallback(callback), buildReadyCallback(callback));
+	}
+
+	this.retrieve = function(key, callback) {
+		var errorCallback = buildErrorCallback(callback);
+		function querySuccess(tx, results) {
+			if(results.rows.length == 0) {
+				callback(null);
+				return;
+			}
+			var row = results.rows.item(0);
+			var value = row['value'];
+			callback(value);
+		}
+		function findByKey(tx) {
+			var sql = "select * from appstate where key='" + key + "'";
+			tx.executeSql(sql, [], querySuccess, errorCallback);
+		}
+		setWorkingState();
+
+		that.db.transaction(findByKey, errorCallback, function() { });
+	}
+
+	this.clear = function(callback) {
+		function clearTable(tx) {
+			tx.executeSql('delete from appstate where 1=1', [], callback, buildErrorCallback(callback));
+		}
+		setWorkingState();
+		that.db.transaction(clearTable, buildErrorCallback(callback), function(){});
+	}
 };
-
-saveState = (function(state) {
-	// save app state
-	var db = window.openDatabase('appState', '1.0', 'App State', 512);
-	db.transaction(function(tx) {
-		tx.executeSql('CREATE TABLE IF NOT EXISTS appState (key, value)');
-		for(var key in state) {
-			var value = state[key] || null;
-		tx.executeSql('INSERT INTO appState VALUES ("' + key + '", "' + value + '")');
-		}   
-	}, noop, noop);
-});
-
-retrieveState = (function(newState) {
-	newState = {};
-	// retrieve app state
-	var db = window.openDatabase('appState', '1.0', 'App State', 512);
-	db.transaction(function(tx) {
-		tx.executeSql('SELECT * FROM appState', [], function(tx, result) {
-			for(var i=0; i < result.rows.length; i++) {
-			var row = result.rows.item(i);
-			newState[row.key] = row.value;
-			}   
-			console.log(newState);
-		},noop);
-	}, noop);
-});
